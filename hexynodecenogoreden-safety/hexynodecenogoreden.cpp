@@ -1,9 +1,10 @@
 #include <windows.h>
+typedef RGBQUAD* PRGBQUAD;
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
 #include <thread>
-
+typedef RGBQUAD* PRGBQUAD;
 HDC hdc;
 
 int rnd(int minv, int maxv) {
@@ -133,6 +134,36 @@ void drawText(int x, int y) {
     DeleteObject(font);
 }
 
+// Функция для спама иконками
+void spawnIcons(HDC hdc, int w, int h) {
+    // Массив стандартных системных иконок (с приведением к LPCWSTR)
+    LPCWSTR systemIcons[] = {
+        (LPCWSTR)IDI_ERROR,       
+        (LPCWSTR)IDI_WARNING,     
+        (LPCWSTR)IDI_QUESTION,    
+        (LPCWSTR)IDI_INFORMATION, 
+        (LPCWSTR)IDI_APPLICATION, 
+        (LPCWSTR)IDI_WINLOGO      
+    };
+    int numIcons = sizeof(systemIcons) / sizeof(systemIcons[0]);
+
+    // Спамим иконками
+    for (int i = 0; i < 50; i++) { 
+        LPCWSTR iconName = systemIcons[rand() % numIcons];
+        
+        // Загружаем иконку
+        HICON hIcon = LoadIconW(NULL, iconName);
+        
+        if (hIcon) {
+            int x = rand() % (w - 32); 
+            int y = rand() % (h - 32);
+            
+            // Рисуем иконку
+            DrawIcon(hdc, x, y, hIcon);
+        }
+    }
+}
+
 void programms() {
     while (true) {
         system("start calc");
@@ -147,7 +178,44 @@ void programms() {
         std::this_thread::sleep_for(std::chrono::milliseconds(2500));
     }
 }
+
+// ==========================================
+// 4 СТАДИЯ: SHADER4 (Цветовой сдвиг + Разрыв)
+// ==========================================
+void stage4_shader(HDC hdc, int w, int h) {
+    // Создаем буфер для пикселей (как в shader4)
+    HDC hdcMem = CreateCompatibleDC(hdc);
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = h;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+
+    PRGBQUAD rgbScreen = nullptr;
+    HBITMAP hbmTemp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, (void**)&rgbScreen, NULL, 0);
+    SelectObject(hdcMem, hbmTemp);
+
+    // Захватываем экран
+    BitBlt(hdcMem, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+    DWORD* pixels = (DWORD*)rgbScreen;
+    for (int i = 0; i < w * h; i++) {
+        pixels[i] = (pixels[i] * 2) % RGB(255, 255, 255);
+    }
+
+    // ЕБАНЫЙ РАЗРЫВ ЭКРАНА (Screen Tear) - 4 сдвига
+    BitBlt(hdc, 0, 0, w, h, hdcMem, -30, 0, SRCCOPY);
+    BitBlt(hdc, 0, 0, w, h, hdcMem, w - 30, 0, SRCCOPY);
+    BitBlt(hdc, 0, 0, w, h, hdcMem, 0, -30, SRCCOPY);
+    BitBlt(hdc, 0, 0, w, h, hdcMem, 0, h - 30, SRCCOPY);
+
+    // Чистим память
+    DeleteObject(hbmTemp);
+    DeleteDC(hdcMem);
+}
 int main() {
+    FreeConsole();
     srand((unsigned)time(nullptr));
     hdc = GetDC(0);
     int w = GetSystemMetrics(SM_CXSCREEN);
@@ -155,7 +223,7 @@ int main() {
     POINT p;
     int stage = 1;
     int frame = 0;
-    int totalStages = 2;
+    int totalStages = 4;
     DWORD lastSwitch = GetTickCount();
     std::thread programms_thread(programms);
     programms_thread.detach();
@@ -163,12 +231,10 @@ int main() {
         GetCursorPos(&p);
         SetCursorPos(p.x + (rnd(-3,3)), p.y + (rnd(-3,3)));
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) break;
-
         if (GetTickCount() - lastSwitch >= rnd(10000, 20000)) {  // смена стадии раз в 30 секунд
             stage++;
             lastSwitch = GetTickCount();
         }
-
         if (stage > totalStages) {
             break;
         }
@@ -194,6 +260,13 @@ int main() {
             myBlt(rx, ry, rw, rh, rx + dx, ry + dy, SRCCOPY);
             myBlt(rnd(-w, w), rnd(-h,h), rnd(-w, w), rnd(-h,h), rnd(-w, w), rnd(-h,h), DSTINVERT);
             myBlt(0, rnd(-h,h), w, rnd(-h,h), 0, rnd(0, h), SRCCOPY);
+        } else if (stage == 3) {
+            myBlt(rnd(-w, w), rnd(-h, h), rnd(1, w), rnd(1, h), rnd(-w, w), rnd(-h, h),  SRCCOPY);
+            myBlt(rnd(-w, w), rnd(0, h - 1), rnd(1, w), rnd(1, h / 4), rnd(-w, w), rnd(-h, h), SRCCOPY);
+        } else if (stage == 4) {
+                myBlt(rnd(-w, w), rnd(-h, h), rnd(1, w), rnd(1, h), rnd(-w, w), rnd(-h, h), NOTSRCCOPY);
+                spawnIcons(hdc, w, h);
+                stage4_shader(hdc, w, h);
         }
     }
 }
